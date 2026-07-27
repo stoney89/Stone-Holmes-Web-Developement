@@ -1,0 +1,2 @@
+date,setup,direction,session_window,entry_time,entry_price,stop_price,target_price,exit_time,exit_price,contracts,planned_r,actual_r,pnl_usd,grade_before_entry,followed_plan,htf_trend_aligned,level_traded,liquidity_swept,choch_bos_confirmed,mistake_tags,screenshot_link,notes
+2026-07-27,orb,long,9:45-11:30,09:52,21150.25,21120.00,21210.75,10:34,21210.75,1,2.0,2.0,119.76,A,yes,yes,OR high,no,yes,,https://tradingview.com/x/EXAMPLE,Example row - delete me. Clean break and retest of OR high with 15m uptrend.
