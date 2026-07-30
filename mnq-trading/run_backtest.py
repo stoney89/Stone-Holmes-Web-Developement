@@ -29,7 +29,7 @@ from setups import ALL_SETUPS
 def main() -> None:
     p = argparse.ArgumentParser(description="MNQ setup backtester")
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--csv", help="TradingView chart-data CSV export")
+    src.add_argument("--csv", help="OHLCV CSV export (TradingView, Databento, etc.)")
     src.add_argument("--yfinance", action="store_true", help="fetch NQ=F 5m bars from Yahoo")
     src.add_argument("--synthetic", action="store_true", help="synthetic bars (pipeline test only)")
     p.add_argument("--setups", nargs="+", choices=list(ALL_SETUPS), default=list(ALL_SETUPS))
@@ -39,7 +39,7 @@ def main() -> None:
     args = p.parse_args()
 
     if args.csv:
-        df, source = data_mod.load_tradingview_csv(args.csv), args.csv
+        df, source = data_mod.load_csv(args.csv), args.csv
     elif args.yfinance:
         df, source = data_mod.load_yfinance(), "yfinance NQ=F 5m"
     else:

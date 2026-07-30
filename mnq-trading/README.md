@@ -29,8 +29,9 @@ python3 run_backtest.py --synthetic
 pip install yfinance
 python3 run_backtest.py --yfinance
 
-# 3. Best data: export your MNQ chart from TradingView
-#    (chart -> "..." menu -> Export chart data, 5m timeframe)
+# 3. Best data: an OHLCV CSV — TradingView chart export (Premium plan) or
+#    Databento (CME-licensed; $125 free signup credit covers years of
+#    1-minute MNQ bars). Both formats are auto-detected.
 python3 run_backtest.py --csv MNQ_5m.csv --trades-csv results.csv
 
 # Grade a trade before you take it

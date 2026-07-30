@@ -31,26 +31,38 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Data is missing columns: {missing}")
     df = df[REQUIRED_COLS].astype(float)
+    # Databento raw exports scale prices by 1e9 (fixed-point ints); undo that.
+    if df["close"].median() > 1e6:
+        for col in ("open", "high", "low", "close"):
+            df[col] = df[col] / 1e9
     df = df[~df.index.duplicated(keep="first")].sort_index()
     return df
 
 
-def load_tradingview_csv(path: str) -> pd.DataFrame:
-    """Load a CSV exported from TradingView (chart -> Export chart data).
+def load_csv(path: str) -> pd.DataFrame:
+    """Load an OHLCV CSV from TradingView, Databento, or any similar export.
 
-    TradingView writes a 'time' column as ISO-8601 or unix seconds.
+    Handles TradingView ('time' as ISO-8601 or unix seconds) and Databento
+    ('ts_event' in nanoseconds), auto-detecting the epoch unit by magnitude.
     """
     df = pd.read_csv(path)
-    time_col = next((c for c in df.columns if c.strip().lower() in ("time", "date", "datetime")), None)
+    candidates = ("time", "date", "datetime", "timestamp", "ts_event", "ts_recv")
+    time_col = next((c for c in df.columns if c.strip().lower() in candidates), None)
     if time_col is None:
         raise ValueError("No time/date column found in CSV")
     ts = df[time_col]
-    if np.issubdtype(ts.dtype, np.number):
-        idx = pd.to_datetime(ts, unit="s", utc=True)
+    if pd.api.types.is_numeric_dtype(ts):
+        mag = float(ts.abs().max())
+        unit = "s" if mag < 1e11 else "ms" if mag < 1e14 else "us" if mag < 1e17 else "ns"
+        idx = pd.to_datetime(ts, unit=unit, utc=True)
     else:
         idx = pd.to_datetime(ts, utc=True, format="mixed")
     df.index = idx.dt.tz_convert(EASTERN)
     return _normalize(df.drop(columns=[time_col]))
+
+
+# Backwards-compatible alias — load_csv handles TradingView exports and more.
+load_tradingview_csv = load_csv
 
 
 def load_yfinance(symbol: str = "NQ=F", interval: str = "5m", period: str = "60d") -> pd.DataFrame:
