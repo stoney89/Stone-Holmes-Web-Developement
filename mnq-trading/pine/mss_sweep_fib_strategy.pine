@@ -101,6 +101,13 @@ bearishCandle = close < open
 consecutiveBullish = ta.barssince(not bullishCandle)
 consecutiveBearish = ta.barssince(not bearishCandle)
 
+// Funnel counters — proof of life for the chart's loaded history
+var int cntSweep = 0
+var int cntInvalid = 0
+var int cntNoMomentum = 0
+var int cntArmed = 0
+var int cntFilled = 0
+
 // --- 1. Detect Sweeps ---
 longTrendCondition = useMacroTrend ? isMacroDowntrend : true
 if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < lastPlPrice and close > lastPlPrice and state == 0
@@ -114,6 +121,7 @@ if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < las
     legLow := low
     legHigh := high
     legEndBar := bar_index
+    cntSweep += 1
     if enableAlerts
         alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing low at " + str.tostring(lastPlPrice, format.mintick) + " — watching for bullish MSS", alert.freq_once_per_bar)
 
@@ -129,6 +137,7 @@ if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > las
     legHigh := high
     legLow := low
     legEndBar := bar_index
+    cntSweep += 1
     if enableAlerts
         alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing high at " + str.tostring(lastPhPrice, format.mintick) + " — watching for bearish MSS", alert.freq_once_per_bar)
 
@@ -139,17 +148,20 @@ if state == 1
         legEndBar := bar_index
     if high > sweepHighPrice
         state := 0
+        cntInvalid += 1
 if state == 2
     if high >= legHigh
         legHigh := high
         legEndBar := bar_index
     if low < sweepLowPrice
         state := 0
+        cntInvalid += 1
 
 // --- 2. MSS with momentum -> draw the setup and place a limit order at the 50% fib ---
 if state == 1 and not na(mssLevel) and close < mssLevel
     if consecutiveBearish >= momentumBars and inSession
         state := -1
+        cntArmed += 1
         float fib = sweepHighPrice - (sweepHighPrice - legLow) * 0.5
         pendSl := fib + atr * slMult
         pendTp := fib - atr * tpMult
@@ -168,10 +180,12 @@ if state == 1 and not na(mssLevel) and close < mssLevel
             alert(syminfo.ticker + " " + timeframe.period + ": SHORT ARMED — MSS confirmed. Sell limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
         state := 0
+        cntNoMomentum += 1
 
 if state == 2 and not na(mssLevel) and close > mssLevel
     if consecutiveBullish >= momentumBars and inSession
         state := -2
+        cntArmed += 1
         float fib = sweepLowPrice + (legHigh - sweepLowPrice) * 0.5
         pendSl := fib - atr * slMult
         pendTp := fib + atr * tpMult
@@ -190,6 +204,7 @@ if state == 2 and not na(mssLevel) and close > mssLevel
             alert(syminfo.ticker + " " + timeframe.period + ": LONG ARMED — MSS confirmed. Buy limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
         state := 0
+        cntNoMomentum += 1
 
 // --- 3. Cancel pending order if the sweep extreme breaks before fill ---
 if state == -1 and strategy.position_size == 0 and high > sweepHighPrice
@@ -206,6 +221,7 @@ justWentFlat    = strategy.position_size == 0 and strategy.position_size[1] != 0
 
 if justFilledShort
     state := 0
+    cntFilled += 1
     if showVisuals
         label.new(bar_index, high, "Short", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.small)
         slBox := box.new(bar_index, pendSl, bar_index + 5, strategy.position_avg_price, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 85))
@@ -215,6 +231,7 @@ if justFilledShort
 
 if justFilledLong
     state := 0
+    cntFilled += 1
     if showVisuals
         label.new(bar_index, low, "Long", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.small)
         slBox := box.new(bar_index, strategy.position_avg_price, bar_index + 5, pendSl, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 85))
@@ -243,6 +260,22 @@ if flatAtClose and atSessionClose
     strategy.cancel_all()
     strategy.close_all(comment = "EOD")
     state := 0
+
+// --- Funnel table: shows the setup pipeline over the chart's loaded history ---
+if showVisuals and barstate.islast
+    var table funnel = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 20), border_width = 1, border_color = color.new(color.gray, 60))
+    table.cell(funnel, 0, 0, "SETUP FUNNEL", text_color = color.orange, text_size = size.small)
+    table.cell(funnel, 1, 0, "count", text_color = color.gray, text_size = size.small)
+    table.cell(funnel, 0, 1, "Sweeps detected", text_color = color.white, text_size = size.small)
+    table.cell(funnel, 1, 1, str.tostring(cntSweep), text_color = color.white, text_size = size.small)
+    table.cell(funnel, 0, 2, "Killed: extreme broken", text_color = color.gray, text_size = size.small)
+    table.cell(funnel, 1, 2, str.tostring(cntInvalid), text_color = color.gray, text_size = size.small)
+    table.cell(funnel, 0, 3, "Killed: no momentum", text_color = color.gray, text_size = size.small)
+    table.cell(funnel, 1, 3, str.tostring(cntNoMomentum), text_color = color.gray, text_size = size.small)
+    table.cell(funnel, 0, 4, "MSS confirmed (armed)", text_color = color.orange, text_size = size.small)
+    table.cell(funnel, 1, 4, str.tostring(cntArmed), text_color = color.orange, text_size = size.small)
+    table.cell(funnel, 0, 5, "Entries filled", text_color = color.lime, text_size = size.small)
+    table.cell(funnel, 1, 5, str.tostring(cntFilled), text_color = color.lime, text_size = size.small)
 
 // --- EMA plot ---
 emaColor = isMacroUptrend ? color.green : color.red
