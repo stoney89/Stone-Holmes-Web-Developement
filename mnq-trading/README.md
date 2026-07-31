@@ -11,7 +11,8 @@ read that first; the code exists to enforce it.
 | `TRADING_PLAN.md` | The plan: setups, risk rules, paper-trading gates, financial route |
 | `data.py` | Load TradingView CSV exports, yfinance NQ=F bars, or synthetic test data |
 | `indicators.py` | VWAP, EMAs, ATR, PDH/PDL, opening range, swing pivots, FVGs |
-| `setups.py` | Detectors: ORB, VWAP trend, PDH/PDL sweep, sweep→CHoCH |
+| `setups.py` | Detectors: ORB, VWAP trend, PDH/PDL sweep, sweep→CHoCH, MSS 50%-fib retrace |
+| `pine/mss_sweep_fib_strategy.pine` | Strategy-Tester version of the LuxAlgo MSS Sweep Fib indicator (paste into TradingView's Pine Editor) |
 | `backtest.py` | Conservative bar-by-bar backtester with real MNQ costs ($2/pt, commissions, slippage) |
 | `run_backtest.py` | CLI that wires it all together |
 | `scorer.py` | Pre-entry checklist that grades a trade A+/A/B/C |

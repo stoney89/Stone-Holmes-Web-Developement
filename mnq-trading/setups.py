@@ -231,9 +231,102 @@ def sweep_choch_signals(df: pd.DataFrame, choch_within_bars: int = 12,
     return signals
 
 
+def mss_fib_signals(df: pd.DataFrame, choch_within_bars: int = 12,
+                    retrace_within_bars: int = 30,
+                    sl_atr: float = 1.5, tp_atr: float = 3.0) -> list[Signal]:
+    """LuxAlgo-style 'MSS Sweep Fib Retrace': sweep -> MSS -> 50% pullback entry.
+
+    Same trigger chain as sweep_choch, but instead of entering on the CHoCH
+    break it waits for price to retrace to 50% of the reversal leg (sweep
+    extreme -> post-MSS extreme) and enters there. Stop is ATR-based like the
+    original indicator (sl_atr x ATR), target is tp_atr x ATR, so reward:risk
+    is fixed at tp_atr/sl_atr. Pending entries are cancelled if the sweep
+    extreme breaks or the retrace never comes within `retrace_within_bars`.
+    """
+    signals: list[Signal] = []
+    target_r = tp_atr / sl_atr
+    for day, d in df.groupby(df.index.date):
+        on = d.between_time("00:00", "09:29")
+        onh = on["high"].max() if len(on) else np.nan
+        onl = on["low"].min() if len(on) else np.nan
+        last_swing_low = last_swing_high = np.nan
+        sweep = None    # [direction, sweep_extreme, leg_extreme, bars_left]
+        pending = None  # [direction, fib, sweep_extreme, bars_left]
+        for ts, row in d.iterrows():
+            if not np.isnan(row["swing_low"]):
+                last_swing_low = row["swing_low"]
+            if not np.isnan(row["swing_high"]):
+                last_swing_high = row["swing_high"]
+            if np.isnan(row["atr"]):
+                continue
+            # --- waiting for the 50% retrace after a confirmed MSS ---
+            if pending is not None:
+                direction, fib, extreme, bars_left = pending
+                bars_left -= 1
+                pending = None
+                if direction == "short":
+                    if row["high"] > extreme:
+                        pass                              # invalidated
+                    elif row["high"] >= fib:
+                        if _in_window(ts, avoid_lunch=False):
+                            signals.append(Signal(ts, "mss_fib", "short",
+                                                  stop=fib + sl_atr * row["atr"],
+                                                  target_r=target_r,
+                                                  context={"fib": round(fib, 2)}))
+                    elif bars_left > 0:
+                        pending = [direction, fib, extreme, bars_left]
+                else:
+                    if row["low"] < extreme:
+                        pass
+                    elif row["low"] <= fib:
+                        if _in_window(ts, avoid_lunch=False):
+                            signals.append(Signal(ts, "mss_fib", "long",
+                                                  stop=fib - sl_atr * row["atr"],
+                                                  target_r=target_r,
+                                                  context={"fib": round(fib, 2)}))
+                    elif bars_left > 0:
+                        pending = [direction, fib, extreme, bars_left]
+                continue
+            # --- looking for a sweep of PDH/PDL or the overnight high/low ---
+            highs = [x for x in (row["pdh"], onh) if not np.isnan(x)]
+            lows = [x for x in (row["pdl"], onl) if not np.isnan(x)]
+            if sweep is None:
+                for lvl in highs:
+                    if row["high"] > lvl:
+                        sweep = ["short", row["high"], row["low"], choch_within_bars]
+                        break
+                if sweep is None:
+                    for lvl in lows:
+                        if row["low"] < lvl:
+                            sweep = ["long", row["low"], row["high"], choch_within_bars]
+                            break
+            # --- sweep active: watch for the CHoCH, then arm the fib entry ---
+            else:
+                direction, extreme, leg, bars_left = sweep
+                if direction == "short":
+                    extreme = max(extreme, row["high"])
+                    leg = min(leg, row["low"])
+                else:
+                    extreme = min(extreme, row["low"])
+                    leg = max(leg, row["high"])
+                bars_left -= 1
+                fired = False
+                if direction == "short" and not np.isnan(last_swing_low) and row["close"] < last_swing_low:
+                    pending = ["short", extreme - (extreme - leg) * 0.5,
+                               extreme, retrace_within_bars]
+                    fired = True
+                elif direction == "long" and not np.isnan(last_swing_high) and row["close"] > last_swing_high:
+                    pending = ["long", extreme + (leg - extreme) * 0.5,
+                               extreme, retrace_within_bars]
+                    fired = True
+                sweep = None if (fired or bars_left <= 0) else [direction, extreme, leg, bars_left]
+    return signals
+
+
 ALL_SETUPS = {
     "orb": orb_signals,
     "vwap_trend": vwap_trend_signals,
     "pdhl_sweep": pdhl_sweep_signals,
     "sweep_choch": sweep_choch_signals,
+    "mss_fib": mss_fib_signals,
 }

@@ -1,0 +1,159 @@
+//@version=6
+// MSS Sweep Fib Retrace — STRATEGY version for TradingView's Strategy Tester.
+//
+// Converted from the LuxAlgo indicator: same sweep -> MSS -> 50% retrace logic,
+// but entries/exits are real strategy orders so the Strategy Tester tab shows
+// net profit, win rate, profit factor, drawdown, and the full trade list.
+//
+// Changes vs the original indicator:
+//   - Take Profit ATR Multiplier defaults to 3.0 (2:1 reward-to-risk vs the 1.5 SL)
+//   - Entries are limit orders at the 50% fib (cancelled if the sweep extreme breaks)
+//   - MNQ costs modeled: $0.62 commission per side, 1 tick slippage
+//   - Optional session filter (9:45-15:00 ET entries) and 15:55 ET flat rule
+//
+// Paste into Pine Editor -> Save -> Add to chart -> open the Strategy Tester tab.
+
+strategy("MSS Sweep Fib Retrace Strategy", overlay = true,
+     initial_capital = 25000,
+     default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.62,
+     slippage = 1,
+     max_lines_count = 500, max_labels_count = 500)
+
+// --- Inputs ---
+leftBars     = input.int(5, "Pivot Left Bars", group = "Pivot Settings")
+rightBars    = input.int(5, "Pivot Right Bars", group = "Pivot Settings")
+momentumBars = input.int(3, "Required Momentum Candles for MSS", group = "Setup Logic")
+
+useMacroTrend = input.bool(true, "Use Overall Macro Trend Filter", group = "Trend Filter")
+emaPeriod     = input.int(200, "Macro Trend EMA Period", group = "Trend Filter")
+
+atrPeriod = input.int(14, "ATR Period", group = "Trade Management")
+slMult    = input.float(1.5, "Stop Loss ATR Multiplier", group = "Trade Management")
+tpMult    = input.float(3.0, "Take Profit ATR Multiplier", group = "Trade Management")
+
+useSessionFilter = input.bool(true, "Only enter 9:45-15:00 ET", group = "Session")
+flatAtClose      = input.bool(true, "Exit everything at 15:55 ET", group = "Session")
+
+// --- Macro Trend / ATR ---
+macroEma = ta.ema(close, emaPeriod)
+isMacroDowntrend = close < macroEma
+isMacroUptrend   = close > macroEma
+atr = ta.atr(atrPeriod)
+
+inSession = not useSessionFilter or not na(time(timeframe.period, "0945-1500", "America/New_York"))
+atSessionClose = not na(time(timeframe.period, "1555-1600", "America/New_York"))
+
+// --- Pivot Calculation ---
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+
+var float prevPhPrice = na
+var float lastPhPrice = na
+var float prevPlPrice = na
+var float lastPlPrice = na
+
+if not na(ph)
+    prevPhPrice := lastPhPrice
+    lastPhPrice := ph
+if not na(pl)
+    prevPlPrice := lastPlPrice
+    lastPlPrice := pl
+
+bool isLocalDowntrend = not na(prevPhPrice) and not na(lastPhPrice) and lastPhPrice < prevPhPrice
+bool isLocalUptrend   = not na(prevPlPrice) and not na(lastPlPrice) and lastPlPrice > prevPlPrice
+
+// --- State ---
+// 0 neutral | 1 bearish swept (short hunting) | 2 bullish swept (long hunting)
+// -1 short pending at fib | -2 long pending at fib
+var int   state = 0
+var float sweepHighPrice = na
+var float sweepLowPrice  = na
+var float mssLevel = na
+var float legHigh = na
+var float legLow  = na
+var float pendSl = na
+var float pendTp = na
+
+bullishCandle = close > open
+bearishCandle = close < open
+consecutiveBullish = ta.barssince(not bullishCandle)
+consecutiveBearish = ta.barssince(not bearishCandle)
+
+// --- 1. Detect Sweeps ---
+longTrendCondition = useMacroTrend ? isMacroDowntrend : true
+if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < lastPlPrice and close > lastPlPrice and state == 0
+    state := 2
+    sweepLowPrice := low
+    mssLevel := lastPhPrice
+    legLow := low
+    legHigh := high
+
+shortTrendCondition = useMacroTrend ? isMacroUptrend : true
+if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > lastPhPrice and close < lastPhPrice and state == 0
+    state := 1
+    sweepHighPrice := high
+    mssLevel := lastPlPrice
+    legHigh := high
+    legLow := low
+
+// Track leg extremes / invalidate if the sweep extreme breaks
+if state == 1
+    if low <= legLow
+        legLow := low
+    if high > sweepHighPrice
+        state := 0
+if state == 2
+    if high >= legHigh
+        legHigh := high
+    if low < sweepLowPrice
+        state := 0
+
+// --- 2. MSS with momentum -> place limit order at the 50% fib ---
+if state == 1 and not na(mssLevel) and close < mssLevel
+    if consecutiveBearish >= momentumBars and inSession
+        state := -1
+        float fib = sweepHighPrice - (sweepHighPrice - legLow) * 0.5
+        pendSl := fib + atr * slMult
+        pendTp := fib - atr * tpMult
+        strategy.entry("Short", strategy.short, limit = fib)
+    else
+        state := 0
+
+if state == 2 and not na(mssLevel) and close > mssLevel
+    if consecutiveBullish >= momentumBars and inSession
+        state := -2
+        float fib = sweepLowPrice + (legHigh - sweepLowPrice) * 0.5
+        pendSl := fib - atr * slMult
+        pendTp := fib + atr * tpMult
+        strategy.entry("Long", strategy.long, limit = fib)
+    else
+        state := 0
+
+// --- 3. Cancel pending order if the sweep extreme breaks before fill ---
+if state == -1 and strategy.position_size == 0 and high > sweepHighPrice
+    strategy.cancel("Short")
+    state := 0
+if state == -2 and strategy.position_size == 0 and low < sweepLowPrice
+    strategy.cancel("Long")
+    state := 0
+
+// Once filled, release the state machine for the next setup
+if strategy.position_size != 0 and (state == -1 or state == -2)
+    state := 0
+
+// --- 4. Bracket exits (attached while a position is open) ---
+if strategy.position_size < 0
+    strategy.exit("Short exit", from_entry = "Short", stop = pendSl, limit = pendTp)
+if strategy.position_size > 0
+    strategy.exit("Long exit", from_entry = "Long", stop = pendSl, limit = pendTp)
+
+// --- 5. Flat into the close ---
+if flatAtClose and atSessionClose
+    strategy.cancel_all()
+    strategy.close_all(comment = "EOD")
+    state := 0
+
+// --- Visuals ---
+emaColor = isMacroUptrend ? color.green : color.red
+plot(useMacroTrend ? macroEma : na, "Macro Trend EMA", color = color.new(emaColor, 50), linewidth = 2)
