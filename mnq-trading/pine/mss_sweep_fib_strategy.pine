@@ -1,24 +1,30 @@
 //@version=6
 // MSS Sweep Fib Retrace — STRATEGY version for TradingView's Strategy Tester.
 //
-// Converted from the LuxAlgo indicator: same sweep -> MSS -> 50% retrace logic,
-// but entries/exits are real strategy orders so the Strategy Tester tab shows
-// net profit, win rate, profit factor, drawdown, and the full trade list.
+// Same sweep -> MSS -> 50% retrace logic as the LuxAlgo indicator, with the
+// SAME on-chart drawings (sweep zone box, swept-level line, MSS line, 50%
+// line, Long/Short labels, SL/TP boxes) PLUS real orders for the Strategy
+// Tester and real-time alerts.
 //
 // Changes vs the original indicator:
 //   - Take Profit ATR Multiplier defaults to 3.0 (2:1 reward-to-risk vs the 1.5 SL)
 //   - Entries are limit orders at the 50% fib (cancelled if the sweep extreme breaks)
 //   - MNQ costs modeled: $0.62 commission per side, 1 tick slippage
-//   - Optional session filter (9:45-15:00 ET entries) and 15:55 ET flat rule
+//   - Optional session filter (9:45-15:00 ET) and 15:55 ET flat rule (both OFF
+//     by default so the tester shows the strategy's full 24h behavior; turn
+//     them on to restrict it to your plan's kill zones)
+//   - alert() calls: sweep detected / setup armed / order filled / position closed
 //
-// Paste into Pine Editor -> Save -> Add to chart -> open the Strategy Tester tab.
+// Paste into Pine Editor -> Save -> Add to chart -> Strategy Tester tab.
+// For alerts: Alert button -> condition = this strategy -> "Order fills and
+// alert() function calls" -> enable push notifications.
 
 strategy("MSS Sweep Fib Retrace Strategy", overlay = true,
      initial_capital = 25000,
      default_qty_type = strategy.fixed, default_qty_value = 1,
      commission_type = strategy.commission.cash_per_contract, commission_value = 0.62,
      slippage = 1,
-     max_lines_count = 500, max_labels_count = 500)
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // --- Inputs ---
 leftBars     = input.int(5, "Pivot Left Bars", group = "Pivot Settings")
@@ -32,11 +38,10 @@ atrPeriod = input.int(14, "ATR Period", group = "Trade Management")
 slMult    = input.float(1.5, "Stop Loss ATR Multiplier", group = "Trade Management")
 tpMult    = input.float(3.0, "Take Profit ATR Multiplier", group = "Trade Management")
 
-useSessionFilter = input.bool(true, "Only enter 9:45-15:00 ET", group = "Session")
-flatAtClose      = input.bool(true, "Exit everything at 15:55 ET", group = "Session")
+useSessionFilter = input.bool(false, "Only enter 9:45-15:00 ET", group = "Session")
+flatAtClose      = input.bool(false, "Exit everything at 15:55 ET", group = "Session")
 
-showVisuals = input.bool(true, "Show Sweep/MSS labels & 50% line", group = "Visuals")
-
+showVisuals  = input.bool(true, "Show Drawings & Labels", group = "Visuals")
 enableAlerts = input.bool(true, "Fire alerts (sweep / setup armed / fill)", group = "Alerts",
      tooltip = "Create ONE TradingView alert on this strategy with condition 'Order fills and alert() function calls' and these messages will reach your popup/phone/email in real time.")
 
@@ -55,15 +60,19 @@ pl = ta.pivotlow(low, leftBars, rightBars)
 
 var float prevPhPrice = na
 var float lastPhPrice = na
+var int   lastPhBar   = na
 var float prevPlPrice = na
 var float lastPlPrice = na
+var int   lastPlBar   = na
 
 if not na(ph)
     prevPhPrice := lastPhPrice
     lastPhPrice := ph
+    lastPhBar   := bar_index - rightBars
 if not na(pl)
     prevPlPrice := lastPlPrice
     lastPlPrice := pl
+    lastPlBar   := bar_index - rightBars
 
 bool isLocalDowntrend = not na(prevPhPrice) and not na(lastPhPrice) and lastPhPrice < prevPhPrice
 bool isLocalUptrend   = not na(prevPlPrice) and not na(lastPlPrice) and lastPlPrice > prevPlPrice
@@ -74,12 +83,18 @@ bool isLocalUptrend   = not na(prevPlPrice) and not na(lastPlPrice) and lastPlPr
 var int   state = 0
 var float sweepHighPrice = na
 var float sweepLowPrice  = na
+var int   sweepBar = na
+var float sweptLevel = na
+var int   sweptBar = na
 var float mssLevel = na
+var int   mssBar = na
 var float legHigh = na
 var float legLow  = na
+var int   legEndBar = na
 var float pendSl = na
 var float pendTp = na
-var int   sweepBar = na
+var box   slBox = na
+var box   tpBox = na
 
 bullishCandle = close > open
 bearishCandle = close < open
@@ -91,12 +106,14 @@ longTrendCondition = useMacroTrend ? isMacroDowntrend : true
 if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < lastPlPrice and close > lastPlPrice and state == 0
     state := 2
     sweepLowPrice := low
+    sweepBar := bar_index
+    sweptLevel := lastPlPrice
+    sweptBar := lastPlBar
     mssLevel := lastPhPrice
+    mssBar := lastPhBar
     legLow := low
     legHigh := high
-    sweepBar := bar_index
-    if showVisuals
-        label.new(bar_index, low, "Sweep", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
+    legEndBar := bar_index
     if enableAlerts
         alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing low at " + str.tostring(lastPlPrice, format.mintick) + " — watching for bullish MSS", alert.freq_once_per_bar)
 
@@ -104,12 +121,14 @@ shortTrendCondition = useMacroTrend ? isMacroUptrend : true
 if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > lastPhPrice and close < lastPhPrice and state == 0
     state := 1
     sweepHighPrice := high
+    sweepBar := bar_index
+    sweptLevel := lastPhPrice
+    sweptBar := lastPhBar
     mssLevel := lastPlPrice
+    mssBar := lastPlBar
     legHigh := high
     legLow := low
-    sweepBar := bar_index
-    if showVisuals
-        label.new(bar_index, high, "Sweep", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+    legEndBar := bar_index
     if enableAlerts
         alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing high at " + str.tostring(lastPhPrice, format.mintick) + " — watching for bearish MSS", alert.freq_once_per_bar)
 
@@ -117,15 +136,17 @@ if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > las
 if state == 1
     if low <= legLow
         legLow := low
+        legEndBar := bar_index
     if high > sweepHighPrice
         state := 0
 if state == 2
     if high >= legHigh
         legHigh := high
+        legEndBar := bar_index
     if low < sweepLowPrice
         state := 0
 
-// --- 2. MSS with momentum -> place limit order at the 50% fib ---
+// --- 2. MSS with momentum -> draw the setup and place a limit order at the 50% fib ---
 if state == 1 and not na(mssLevel) and close < mssLevel
     if consecutiveBearish >= momentumBars and inSession
         state := -1
@@ -134,9 +155,15 @@ if state == 1 and not na(mssLevel) and close < mssLevel
         pendTp := fib - atr * tpMult
         strategy.entry("Short", strategy.short, limit = fib)
         if showVisuals
-            label.new(bar_index, close, "MSS", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
-            line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
-            label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
+            line.new(sweptBar, sweptLevel, sweepBar, sweptLevel, color = color.new(color.red, 50), style = line.style_dotted, width = 2)
+            box.new(sweepBar - 1, sweepHighPrice, sweepBar + 1, sweptLevel, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 90))
+            line.new(sweepBar, sweepHighPrice, bar_index, sweepHighPrice, color = color.new(color.red, 30), style = line.style_dashed)
+            label.new(sweepBar, sweepHighPrice, "Sweep", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+            line.new(mssBar, mssLevel, bar_index, mssLevel, color = color.new(color.red, 0), width = 2)
+            label.new(math.round((mssBar + bar_index) / 2), mssLevel, "MSS", style = label.style_none, textcolor = color.red, size = size.small)
+            line.new(sweepBar, sweepHighPrice, legEndBar, legLow, color = color.new(color.gray, 50), width = 1)
+            line.new(sweepBar, fib, bar_index + 10, fib, color = color.gray, style = line.style_dotted)
+            label.new(bar_index + 10, fib, "50% Retracement", style = label.style_label_left, color = color.new(color.gray, 100), textcolor = color.gray, size = size.small)
         if enableAlerts
             alert(syminfo.ticker + " " + timeframe.period + ": SHORT ARMED — MSS confirmed. Sell limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
@@ -150,9 +177,15 @@ if state == 2 and not na(mssLevel) and close > mssLevel
         pendTp := fib + atr * tpMult
         strategy.entry("Long", strategy.long, limit = fib)
         if showVisuals
-            label.new(bar_index, close, "MSS", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
-            line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
-            label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
+            line.new(sweptBar, sweptLevel, sweepBar, sweptLevel, color = color.new(color.green, 50), style = line.style_dotted, width = 2)
+            box.new(sweepBar - 1, sweptLevel, sweepBar + 1, sweepLowPrice, border_color = color.new(color.green, 50), bgcolor = color.new(color.green, 90))
+            line.new(sweepBar, sweepLowPrice, bar_index, sweepLowPrice, color = color.new(color.green, 30), style = line.style_dashed)
+            label.new(sweepBar, sweepLowPrice, "Sweep", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
+            line.new(mssBar, mssLevel, bar_index, mssLevel, color = color.new(color.green, 0), width = 2)
+            label.new(math.round((mssBar + bar_index) / 2), mssLevel, "MSS", style = label.style_none, textcolor = color.green, size = size.small)
+            line.new(sweepBar, sweepLowPrice, legEndBar, legHigh, color = color.new(color.gray, 50), width = 1)
+            line.new(sweepBar, fib, bar_index + 10, fib, color = color.gray, style = line.style_dotted)
+            label.new(bar_index + 10, fib, "50% Retracement", style = label.style_label_left, color = color.new(color.gray, 100), textcolor = color.gray, size = size.small)
         if enableAlerts
             alert(syminfo.ticker + " " + timeframe.period + ": LONG ARMED — MSS confirmed. Buy limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
@@ -166,33 +199,51 @@ if state == -2 and strategy.position_size == 0 and low < sweepLowPrice
     strategy.cancel("Long")
     state := 0
 
-// Once filled, release the state machine for the next setup
-if strategy.position_size != 0 and (state == -1 or state == -2)
-    state := 0
+// Once filled, release the state machine and draw the trade like the original
+justFilledLong  = strategy.position_size > 0 and strategy.position_size[1] <= 0
+justFilledShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
+justWentFlat    = strategy.position_size == 0 and strategy.position_size[1] != 0
 
-// --- 4. Bracket exits (attached while a position is open) ---
+if justFilledShort
+    state := 0
+    if showVisuals
+        label.new(bar_index, high, "Short", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.small)
+        slBox := box.new(bar_index, pendSl, bar_index + 5, strategy.position_avg_price, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 85))
+        tpBox := box.new(bar_index, strategy.position_avg_price, bar_index + 5, pendTp, border_color = color.new(color.green, 50), bgcolor = color.new(color.green, 85))
+    if enableAlerts
+        alert(syminfo.ticker + ": SHORT FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
+
+if justFilledLong
+    state := 0
+    if showVisuals
+        label.new(bar_index, low, "Long", style = label.style_label_up, color = color.green, textcolor = color.white, size = size.small)
+        slBox := box.new(bar_index, strategy.position_avg_price, bar_index + 5, pendSl, border_color = color.new(color.red, 50), bgcolor = color.new(color.red, 85))
+        tpBox := box.new(bar_index, pendTp, bar_index + 5, strategy.position_avg_price, border_color = color.new(color.green, 50), bgcolor = color.new(color.green, 85))
+    if enableAlerts
+        alert(syminfo.ticker + ": LONG FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
+
+// --- 4. Bracket exits + extend/close the SL/TP boxes ---
 if strategy.position_size < 0
     strategy.exit("Short exit", from_entry = "Short", stop = pendSl, limit = pendTp)
 if strategy.position_size > 0
     strategy.exit("Long exit", from_entry = "Long", stop = pendSl, limit = pendTp)
 
-// --- Fill / flat alerts ---
-justFilledLong  = strategy.position_size > 0 and strategy.position_size[1] <= 0
-justFilledShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
-justWentFlat    = strategy.position_size == 0 and strategy.position_size[1] != 0
-if enableAlerts and justFilledLong
-    alert(syminfo.ticker + ": LONG FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
-if enableAlerts and justFilledShort
-    alert(syminfo.ticker + ": SHORT FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
-if enableAlerts and justWentFlat
-    alert(syminfo.ticker + ": position closed (stop, target, or end of day)", alert.freq_once_per_bar)
+if strategy.position_size != 0 and showVisuals and not na(slBox)
+    box.set_right(slBox, bar_index + 5)
+    box.set_right(tpBox, bar_index + 5)
+if justWentFlat
+    if showVisuals and not na(slBox)
+        box.set_right(slBox, bar_index)
+        box.set_right(tpBox, bar_index)
+    if enableAlerts
+        alert(syminfo.ticker + ": position closed (stop, target, or end of day)", alert.freq_once_per_bar)
 
-// --- 5. Flat into the close ---
+// --- 5. Flat into the close (optional) ---
 if flatAtClose and atSessionClose
     strategy.cancel_all()
     strategy.close_all(comment = "EOD")
     state := 0
 
-// --- Visuals ---
+// --- EMA plot ---
 emaColor = isMacroUptrend ? color.green : color.red
 plot(useMacroTrend ? macroEma : na, "Macro Trend EMA", color = color.new(emaColor, 50), linewidth = 2)
