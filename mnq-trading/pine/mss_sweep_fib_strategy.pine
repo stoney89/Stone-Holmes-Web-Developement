@@ -37,6 +37,9 @@ flatAtClose      = input.bool(true, "Exit everything at 15:55 ET", group = "Sess
 
 showVisuals = input.bool(true, "Show Sweep/MSS labels & 50% line", group = "Visuals")
 
+enableAlerts = input.bool(true, "Fire alerts (sweep / setup armed / fill)", group = "Alerts",
+     tooltip = "Create ONE TradingView alert on this strategy with condition 'Order fills and alert() function calls' and these messages will reach your popup/phone/email in real time.")
+
 // --- Macro Trend / ATR ---
 macroEma = ta.ema(close, emaPeriod)
 isMacroDowntrend = close < macroEma
@@ -94,6 +97,8 @@ if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < las
     sweepBar := bar_index
     if showVisuals
         label.new(bar_index, low, "Sweep", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
+    if enableAlerts
+        alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing low at " + str.tostring(lastPlPrice, format.mintick) + " — watching for bullish MSS", alert.freq_once_per_bar)
 
 shortTrendCondition = useMacroTrend ? isMacroUptrend : true
 if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > lastPhPrice and close < lastPhPrice and state == 0
@@ -105,6 +110,8 @@ if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > las
     sweepBar := bar_index
     if showVisuals
         label.new(bar_index, high, "Sweep", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+    if enableAlerts
+        alert(syminfo.ticker + " " + timeframe.period + ": SWEEP of swing high at " + str.tostring(lastPhPrice, format.mintick) + " — watching for bearish MSS", alert.freq_once_per_bar)
 
 // Track leg extremes / invalidate if the sweep extreme breaks
 if state == 1
@@ -130,6 +137,8 @@ if state == 1 and not na(mssLevel) and close < mssLevel
             label.new(bar_index, close, "MSS", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
             line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
             label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
+        if enableAlerts
+            alert(syminfo.ticker + " " + timeframe.period + ": SHORT ARMED — MSS confirmed. Sell limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
         state := 0
 
@@ -144,6 +153,8 @@ if state == 2 and not na(mssLevel) and close > mssLevel
             label.new(bar_index, close, "MSS", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
             line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
             label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
+        if enableAlerts
+            alert(syminfo.ticker + " " + timeframe.period + ": LONG ARMED — MSS confirmed. Buy limit " + str.tostring(fib, format.mintick) + " | SL " + str.tostring(pendSl, format.mintick) + " | TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
     else
         state := 0
 
@@ -164,6 +175,17 @@ if strategy.position_size < 0
     strategy.exit("Short exit", from_entry = "Short", stop = pendSl, limit = pendTp)
 if strategy.position_size > 0
     strategy.exit("Long exit", from_entry = "Long", stop = pendSl, limit = pendTp)
+
+// --- Fill / flat alerts ---
+justFilledLong  = strategy.position_size > 0 and strategy.position_size[1] <= 0
+justFilledShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
+justWentFlat    = strategy.position_size == 0 and strategy.position_size[1] != 0
+if enableAlerts and justFilledLong
+    alert(syminfo.ticker + ": LONG FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
+if enableAlerts and justFilledShort
+    alert(syminfo.ticker + ": SHORT FILLED at " + str.tostring(strategy.position_avg_price, format.mintick) + " — bracket SL " + str.tostring(pendSl, format.mintick) + " / TP " + str.tostring(pendTp, format.mintick), alert.freq_once_per_bar)
+if enableAlerts and justWentFlat
+    alert(syminfo.ticker + ": position closed (stop, target, or end of day)", alert.freq_once_per_bar)
 
 // --- 5. Flat into the close ---
 if flatAtClose and atSessionClose
