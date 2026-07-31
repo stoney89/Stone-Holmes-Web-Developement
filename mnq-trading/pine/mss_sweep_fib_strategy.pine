@@ -35,6 +35,8 @@ tpMult    = input.float(3.0, "Take Profit ATR Multiplier", group = "Trade Manage
 useSessionFilter = input.bool(true, "Only enter 9:45-15:00 ET", group = "Session")
 flatAtClose      = input.bool(true, "Exit everything at 15:55 ET", group = "Session")
 
+showVisuals = input.bool(true, "Show Sweep/MSS labels & 50% line", group = "Visuals")
+
 // --- Macro Trend / ATR ---
 macroEma = ta.ema(close, emaPeriod)
 isMacroDowntrend = close < macroEma
@@ -74,6 +76,7 @@ var float legHigh = na
 var float legLow  = na
 var float pendSl = na
 var float pendTp = na
+var int   sweepBar = na
 
 bullishCandle = close > open
 bearishCandle = close < open
@@ -88,6 +91,9 @@ if isLocalDowntrend and longTrendCondition and not na(lastPlPrice) and low < las
     mssLevel := lastPhPrice
     legLow := low
     legHigh := high
+    sweepBar := bar_index
+    if showVisuals
+        label.new(bar_index, low, "Sweep", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
 
 shortTrendCondition = useMacroTrend ? isMacroUptrend : true
 if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > lastPhPrice and close < lastPhPrice and state == 0
@@ -96,6 +102,9 @@ if isLocalUptrend and shortTrendCondition and not na(lastPhPrice) and high > las
     mssLevel := lastPlPrice
     legHigh := high
     legLow := low
+    sweepBar := bar_index
+    if showVisuals
+        label.new(bar_index, high, "Sweep", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
 
 // Track leg extremes / invalidate if the sweep extreme breaks
 if state == 1
@@ -117,6 +126,10 @@ if state == 1 and not na(mssLevel) and close < mssLevel
         pendSl := fib + atr * slMult
         pendTp := fib - atr * tpMult
         strategy.entry("Short", strategy.short, limit = fib)
+        if showVisuals
+            label.new(bar_index, close, "MSS", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+            line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
+            label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
     else
         state := 0
 
@@ -127,6 +140,10 @@ if state == 2 and not na(mssLevel) and close > mssLevel
         pendSl := fib - atr * slMult
         pendTp := fib + atr * tpMult
         strategy.entry("Long", strategy.long, limit = fib)
+        if showVisuals
+            label.new(bar_index, close, "MSS", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.green, size = size.small)
+            line.new(sweepBar, fib, bar_index + 10, fib, color = color.orange, style = line.style_dotted, width = 2)
+            label.new(bar_index + 10, fib, "50% entry", style = label.style_label_left, color = color.new(color.black, 100), textcolor = color.orange, size = size.small)
     else
         state := 0
 
