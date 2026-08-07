@@ -74,3 +74,23 @@ act as a potential support/resistance or entry zone.
 
 1. Open a chart → Pine Editor → paste the script → "Add to chart".
 2. Works on any symbol/timeframe.
+
+## Liquidity Sweeps + Signals (modified version)
+
+File: [`liquidity-sweeps-signals.pine`](liquidity-sweeps-signals.pine)
+
+A modified copy of the script above (same CC BY-NC-SA 4.0 license, LuxAlgo attribution kept)
+that turns detections into explicit trade suggestions:
+
+- **▲ green triangle below a bar** — bullish liquidity sweep confirmed on that bar's close
+  (a swing low was taken and price closed back above it)
+- **▼ red triangle above a bar** — bearish liquidity sweep confirmed
+- **◆ small diamond** — price retested a still-active sweep area and closed back outside it
+  (a "second chance" entry; requires `Extend` to be on)
+
+Each of the four events has a matching `alertcondition`, so alerts can be created in
+TradingView: Alert → Condition → *Liquidity Sweeps + Signals* → pick the event → set trigger
+to **Once Per Bar Close**.
+
+The markers are suggestions, not a backtested strategy — entry/stop/exit rules are documented
+in the playbook. Signals evaluate on closed bars and do not repaint.
